@@ -19,12 +19,16 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.*;
+import java.util.regex.*;
+import java.util.stream.*;
 
 public class MinecraftLogBot {
 	public static Properties prop = new Properties();
 	static String token = "";
 	public static String version = "1.0";
 	public static String dbPath = "";
+	public static String patternFile = "";
+	public static String translationFile = "";
 	public static final String osName = System.getProperty("os.name").toLowerCase();
 
 	public static void main(String[] args) {
@@ -117,6 +121,8 @@ public class MinecraftLogBot {
 			Message.systemName = prop.getProperty("systemName");
 			Message.systemAvatarUrl = prop.getProperty("systemAvatarUrl");
 			MinecraftLogBot.dbPath = prop.getProperty("dbPath");
+			MinecraftLogBot.patternFile = prop.getProperty("patternFile");
+			MinecraftLogBot.translationFile = prop.getProperty("translationFile");
 		}
 		catch (FileNotFoundException e) {
 			types.add(FileType.SETTING);
@@ -195,6 +201,61 @@ public class MinecraftLogBot {
 		List<LogFilterJson> jsons = new Gson().fromJson(sb.toString(), new TypeToken<List<LogFilterJson>>(){}.getType());
 		Parser.register(jsons);
 
+		if (!MinecraftLogBot.patternFile.isEmpty())
+		{
+			try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(MinecraftLogBot.patternFile), StandardCharsets.UTF_8))) {
+				Map<String, String> formatString = new Gson().fromJson(reader, new TypeToken<Map<String, String>>(){}.getType());
+				final String[] l = {
+					"chat.type.advancement.",
+					"commands.whitelist.",
+					"death.",
+					"multiplayer.player.joined",
+					"multiplayer.player.left"
+				};
+				final String[] a = {
+					"advancements.",
+					"entity.minecraft."
+				};
+				Map<String, String> logPattern = formatString
+					.entrySet().stream()
+					.filter(entry -> Stream.of(l).anyMatch(c -> entry.getKey().startsWith(c)))
+					.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+				Pattern SPECIAL_REGEX_CHARS = Pattern.compile("[\\{\\}\\(\\)\\[\\]\\.\\+\\*\\?\\^\\$\\\\\\|]");
+				logPattern.forEach((k, v) -> {
+					String[] part = v.split("%s", -1);
+					v = part[0];
+					for (int i = 1; i < part.length; i++) {
+						v = v + "%" + i + "$s" + part[i];
+					}
+					Pattern pattern = Pattern.compile("\\[.*\\] \\[Server thread/INFO\\]: " +
+							SPECIAL_REGEX_CHARS.matcher(v).replaceAll("\\\\$0")
+							.replaceAll("%(\\d)\\\\\\$[sd]", "(?<g$1>\\\\[?.+\\\\]?)"));
+					Parser.addPattern(k, pattern);
+				});
+				System.out.println("Loaded " + logPattern.size() + " patterns");
+				Map<String, String> names = formatString
+					.entrySet().stream()
+					.filter(entry -> Stream.of(a).anyMatch(c -> entry.getKey().startsWith(c)))
+					.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+				Parser.addNames(names);
+				System.out.println("Loaded " + names.size() + " names");
+			}
+			catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
+		if (!MinecraftLogBot.translationFile.isEmpty())
+		{
+			try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(MinecraftLogBot.translationFile), StandardCharsets.UTF_8))) {
+				Map<String, String> translations = new Gson().fromJson(reader, new TypeToken<Map<String, String>>(){}.getType());
+				Parser.addTranslations(translations);
+			}
+			catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
 		return true;
 	}
 
@@ -207,6 +268,8 @@ public class MinecraftLogBot {
 				prop.setProperty("url", "");
 				prop.setProperty("token", "");
 				prop.setProperty("logFile", "");
+				prop.setProperty("patternFile", "");
+				prop.setProperty("translationFile", "");
 				prop.setProperty("before", "0");
 				prop.setProperty("settingChannelId", "");
 				prop.setProperty("textChannelId", "");
